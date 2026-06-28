@@ -1122,6 +1122,59 @@ class OpenAIlikedTranslator(OpenAITranslator):
         return content
 
 
+class DuccTranslator(BaseTranslator):
+    name = "ducc"
+    envs = {
+        "DUCC_BASE_URL": "https://oneapi-comate.baidu-int.com/v1/messages",
+        "DUCC_API_KEY": None,
+        "DUCC_MODEL": "gpt-5.5",
+    }
+    CustomPrompt = True
+    DEFAULT_MAX_TOKENS = 4096
+
+    def __init__(
+        self, lang_in, lang_out, model, envs=None, prompt=None, ignore_cache=False
+    ):
+        self.set_envs(envs)
+        if not self.envs["DUCC_BASE_URL"]:
+            raise ValueError("The DUCC_BASE_URL is missing.")
+        if not self.envs["DUCC_API_KEY"]:
+            raise ValueError("The DUCC_API_KEY is missing.")
+        if not model:
+            if self.envs["DUCC_MODEL"]:
+                model = self.envs["DUCC_MODEL"]
+            else:
+                raise ValueError("The DUCC_MODEL is missing.")
+        super().__init__(lang_in, lang_out, model, ignore_cache)
+        self.session = requests.Session()
+        self.prompttext = prompt
+        self.add_cache_impact_parameters("max_tokens", self.DEFAULT_MAX_TOKENS)
+        self.add_cache_impact_parameters("prompt", self.prompt("", self.prompttext))
+
+    def do_translate(self, text) -> str:
+        response = self.session.post(
+            self.envs["DUCC_BASE_URL"],
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.envs['DUCC_API_KEY']}",
+            },
+            json={
+                "model": self.model,
+                "max_tokens": self.DEFAULT_MAX_TOKENS,
+                "messages": self.prompt(text, self.prompttext),
+            },
+        )
+        response.raise_for_status()
+        content = "".join(
+            item.get("text", "")
+            for item in response.json().get("content", [])
+            if item.get("type") == "text"
+        ).strip()
+        if not content:
+            raise ValueError("No text content returned from Ducc.")
+        return content
+
+
 class QwenMtTranslator(OpenAITranslator):
     """
     Use Qwen-MT model from Aliyun. it's designed for translating.

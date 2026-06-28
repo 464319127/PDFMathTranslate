@@ -6,7 +6,12 @@ from ollama import ResponseError as OllamaResponseError
 
 from pdf2zh import cache
 from pdf2zh.config import ConfigManager
-from pdf2zh.translator import BaseTranslator, OllamaTranslator, OpenAIlikedTranslator
+from pdf2zh.translator import (
+    BaseTranslator,
+    DuccTranslator,
+    OllamaTranslator,
+    OpenAIlikedTranslator,
+)
 
 # Since it is necessary to test whether the functionality meets the expected requirements,
 # private functions and private methods are allowed to be called.
@@ -150,6 +155,104 @@ class TestOpenAIlikedTranslator(unittest.TestCase):
             self.default_envs["OPENAILIKED_BASE_URL"],
         )
         self.assertIsNone(translator.envs["OPENAILIKED_API_KEY"])
+
+
+class TestDuccTranslator(unittest.TestCase):
+    def setUp(self) -> None:
+        self.default_envs = {
+            "DUCC_BASE_URL": "https://ducc.example.com/v1/messages",
+            "DUCC_API_KEY": "test_api_key",
+            "DUCC_MODEL": "test_model",
+        }
+
+    def test_missing_base_url_raises_error(self):
+        ConfigManager.clear()
+        envs = dict(self.default_envs)
+        envs["DUCC_BASE_URL"] = None
+        with self.assertRaises(ValueError) as context:
+            DuccTranslator(lang_in="en", lang_out="zh", model=None, envs=envs)
+        self.assertIn("The DUCC_BASE_URL is missing.", str(context.exception))
+
+    def test_missing_api_key_raises_error(self):
+        ConfigManager.clear()
+        envs = dict(self.default_envs)
+        envs["DUCC_API_KEY"] = None
+        with self.assertRaises(ValueError) as context:
+            DuccTranslator(lang_in="en", lang_out="zh", model=None, envs=envs)
+        self.assertIn("The DUCC_API_KEY is missing.", str(context.exception))
+
+    def test_missing_model_raises_error(self):
+        ConfigManager.clear()
+        envs = dict(self.default_envs)
+        envs["DUCC_MODEL"] = None
+        with self.assertRaises(ValueError) as context:
+            DuccTranslator(lang_in="en", lang_out="zh", model=None, envs=envs)
+        self.assertIn("The DUCC_MODEL is missing.", str(context.exception))
+
+    def test_initialization_with_valid_envs(self):
+        ConfigManager.clear()
+        translator = DuccTranslator(
+            lang_in="en",
+            lang_out="zh",
+            model=None,
+            envs=self.default_envs,
+        )
+        self.assertEqual(
+            translator.envs["DUCC_BASE_URL"], self.default_envs["DUCC_BASE_URL"]
+        )
+        self.assertEqual(
+            translator.envs["DUCC_API_KEY"], self.default_envs["DUCC_API_KEY"]
+        )
+        self.assertEqual(translator.model, self.default_envs["DUCC_MODEL"])
+
+    def test_do_translate(self):
+        ConfigManager.clear()
+        translator = DuccTranslator(
+            lang_in="en",
+            lang_out="zh",
+            model=None,
+            envs=self.default_envs,
+        )
+        with mock.patch.object(translator, "session") as mock_session:
+            response = mock_session.post.return_value
+            response.json.return_value = {
+                "content": [
+                    {"type": "text", "text": "你好"},
+                ]
+            }
+
+            text = "hello"
+            translated_result = translator.do_translate(text)
+            mock_session.post.assert_called_once_with(
+                self.default_envs["DUCC_BASE_URL"],
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {self.default_envs['DUCC_API_KEY']}",
+                },
+                json={
+                    "model": self.default_envs["DUCC_MODEL"],
+                    "max_tokens": translator.DEFAULT_MAX_TOKENS,
+                    "messages": translator.prompt(text, translator.prompttext),
+                },
+            )
+            response.raise_for_status.assert_called_once()
+            self.assertEqual("你好", translated_result)
+
+    def test_empty_response_raises_error(self):
+        ConfigManager.clear()
+        translator = DuccTranslator(
+            lang_in="en",
+            lang_out="zh",
+            model=None,
+            envs=self.default_envs,
+        )
+        with mock.patch.object(translator, "session") as mock_session:
+            response = mock_session.post.return_value
+            response.json.return_value = {"content": []}
+
+            with self.assertRaises(ValueError) as context:
+                translator.do_translate("hello")
+            self.assertIn("No text content returned from Ducc.", str(context.exception))
 
 
 class TestOllamaTranslator(unittest.TestCase):
